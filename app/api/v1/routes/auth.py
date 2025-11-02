@@ -4,15 +4,16 @@ from supabase import create_client, Client
 from fastapi import HTTPException, Depends, Response, Request
 import secrets
 import time
+import app.models.auth_models as models
 from fastapi import APIRouter
 import app.utils.utils as utils
-from app.api.v1.routes import deps
-from config_sample import SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, API_BASE_URL, FRONTEND_BASE_URL
+from app.api import deps
+import config_sample as config 
 router = APIRouter()
 # Supabase clients
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+supabase: Client = create_client(config.SUPABASE_URL, config.SUPABASE_ANON_KEY)
 supabase_admin: Optional[Client] = (
-    create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) if SUPABASE_SERVICE_ROLE_KEY else None
+    create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY) if config.SUPABASE_SERVICE_ROLE_KEY else None
 )
 # In-memory store for OAuth PKCE state -> code_verifier (demo-only; use redis for production)
 OAUTH_STATE_STORE: Dict[str, Dict[str, Any]] = {}  # state: {"code_verifier": str, "expires_at": int}
@@ -24,7 +25,7 @@ def health():
 
 # Email/password signup
 @router.post("/auth/signup")
-def signup(payload: utils.EmailPasswordSignUp):
+def signup(payload: models.EmailPasswordSignUp):
     try:
         res = supabase.auth.sign_up({"email": payload.email, "password": payload.password, "data": payload.data or {}})
         # If email confirmations are enabled, session will be None
@@ -38,7 +39,7 @@ def signup(payload: utils.EmailPasswordSignUp):
 
 # Email/password sign-in
 @router.post("/auth/signin")
-def signin(payload: utils.EmailPasswordSignIn, response: Response):
+def signin(payload: models.EmailPasswordSignIn, response: Response):
     try:
         res = supabase.auth.sign_in_with_password({"email": payload.email, "password": payload.password})
         if not res.session:
@@ -69,7 +70,7 @@ async def me(user: Dict[str, Any] = Depends(deps.get_current_user)):
 
 # Refresh session tokens
 @router.post("/auth/refresh")
-def refresh_tokens(payload: utils.RefreshRequest, response: Response, request: Request):
+def refresh_tokens(payload: models.RefreshRequest, response: Response, request: Request):
     refresh_token = payload.refresh_token or request.cookies.get(utils.REFRESH_TOKEN_COOKIE)
     if not refresh_token:
         raise HTTPException(status_code=400, detail="Missing refresh token")
@@ -77,15 +78,15 @@ def refresh_tokens(payload: utils.RefreshRequest, response: Response, request: R
         res = supabase.auth.refresh_session(refresh_token)
         if not res.session:
             raise HTTPException(status_code=400, detail="No new session")
-        utils.set_session_cookies(response, res.session.access_token, res.session.refresh_token, max_age=res.session.expires_in or 3600)
+        models.set_session_cookies(response, res.session.access_token, res.session.refresh_token, max_age=res.session.expires_in or 3600)
         return {"user": {"id": res.user.id, "email": res.user.email}, "expires_in": res.session.expires_in}
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
 
 # Magic link (email OTP) request
 @router.post("/auth/magiclink")
-def magic_link(payload: utils.MagicLinkRequest):
-    redirect_to = payload.redirect_to or f"{API_BASE_URL}/auth/oauth/callback"
+def magic_link(payload: models.MagicLinkRequest):
+    redirect_to = payload.redirect_to or f"{config.API_BASE_URL}/auth/oauth/callback"
     try:
         supabase.auth.sign_in_with_otp({"email": payload.email, "options": {"email_redirect_to": redirect_to}})
         return {"message": "Magic link sent if the email exists"}
@@ -94,7 +95,7 @@ def magic_link(payload: utils.MagicLinkRequest):
 
 # Verify email OTP code (if you opt for code entry instead of link)
 @router.post("/auth/verify-email-otp")
-def verify_email_otp(payload: utils.VerifyEmailOtp, response: Response):
+def verify_email_otp(payload: models.VerifyEmailOtp, response: Response):
     try:
         res = supabase.auth.verify_otp({"email": payload.email, "token": payload.token, "type": "email"})
         if not res.session:
@@ -106,7 +107,7 @@ def verify_email_otp(payload: utils.VerifyEmailOtp, response: Response):
 
 # Phone signup (triggers SMS verification)
 @router.post("/auth/signup-phone")
-def signup_phone(payload: utils.PhoneSignUp):
+def signup_phone(payload: models.PhoneSignUp):
     try:
         res = supabase.auth.sign_up({"phone": payload.phone, "password": payload.password, "data": payload.data or {}})
         return {"user": {"id": res.user.id, "phone": res.user.phone}, "message": "Signup started. Verify via SMS OTP."}
@@ -115,7 +116,7 @@ def signup_phone(payload: utils.PhoneSignUp):
 
 # Phone sign-in (OTP)
 @router.post("/auth/signin-phone-otp")
-def signin_phone_otp(payload: utils.PhoneSignInOtp):
+def signin_phone_otp(payload: models.PhoneSignInOtp):
     try:
         # Sends OTP to phone
         supabase.auth.sign_in_with_otp({"phone": payload.phone})
@@ -125,7 +126,7 @@ def signin_phone_otp(payload: utils.PhoneSignInOtp):
 
 # Verify phone OTP
 @router.post("/auth/verify-phone-otp")
-def verify_phone_otp(payload: utils.VerifyPhoneOtp, response: Response):
+def verify_phone_otp(payload: models.VerifyPhoneOtp, response: Response):
     try:
         res = supabase.auth.verify_otp({"phone": payload.phone, "token": payload.token, "type": "sms"})
         if not res.session:
@@ -137,8 +138,8 @@ def verify_phone_otp(payload: utils.VerifyPhoneOtp, response: Response):
 
 # Request password reset
 @router.post("/auth/reset-password")
-def reset_password(payload: utils.PasswordResetRequest):
-    redirect_to = payload.redirect_to or f"{FRONTEND_BASE_URL}/reset-password"
+def reset_password(payload: models.PasswordResetRequest):
+    redirect_to = payload.redirect_to or f"{config.FRONTEND_BASE_URL}/reset-password"
     try:
         supabase.auth.reset_password_for_email(payload.email, {"redirect_to": redirect_to})
         return {"message": "If the email exists, a reset link was sent"}
@@ -147,7 +148,7 @@ def reset_password(payload: utils.PasswordResetRequest):
 
 # Update password (requires authenticated user)
 @router.post("/auth/update-password")
-async def update_password(payload: utils.PasswordUpdateRequest, user: Dict[str, Any] = Depends(deps.get_current_user)):
+async def update_password(payload: models.PasswordUpdateRequest, user: Dict[str, Any] = Depends(deps.get_current_user)):
     try:
         supabase.auth.update_user({"password": payload.new_password})
         return {"message": "Password updated"}
@@ -165,9 +166,9 @@ def oauth_start(provider: str, request: Request):
     # Store code_verifier in memory keyed by state (expires in 10 min)
     OAUTH_STATE_STORE[state] = {"code_verifier": code_verifier, "expires_at": int(time.time()) + 600}
     # Build authorize URL
-    redirect_uri = f"{API_BASE_URL}/auth/oauth/callback"
+    redirect_uri = f"{config.API_BASE_URL}/auth/oauth/callback"
     authorize_url = (
-        f"{SUPABASE_URL}/auth/v1/authorize"
+        f"{config.SUPABASE_URL}/auth/v1/authorize"
         f"?provider={provider}"
         f"&redirect_to={redirect_uri}"
         f"&response_type=code"
@@ -190,7 +191,7 @@ async def oauth_callback(code: Optional[str] = None, state: Optional[str] = None
     # Clean up state
     OAUTH_STATE_STORE.pop(state, None)
 
-    redirect_uri = f"{API_BASE_URL}/auth/oauth/callback"
+    redirect_uri = f"{config.API_BASE_URL}/auth/oauth/callback"
     try:
         token_data = await utils.supabase_exchange_code_for_session(code, code_verifier, redirect_uri)
         access_token = token_data.get("access_token")
@@ -201,7 +202,7 @@ async def oauth_callback(code: Optional[str] = None, state: Optional[str] = None
 
         utils.set_session_cookies(response, access_token, refresh_token, max_age=expires_in)
         # Redirect to your frontend post-auth page
-        return Response(status_code=307, headers={"Location": f"{FRONTEND_BASE_URL}/auth/success"})
+        return Response(status_code=307, headers={"Location": f"{config.FRONTEND_BASE_URL}/auth/success"})
     except HTTPException:
         raise
     except Exception as e:

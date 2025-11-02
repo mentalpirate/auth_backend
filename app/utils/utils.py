@@ -4,15 +4,7 @@ import secrets
 from fastapi import Request, Response, HTTPException
 import httpx
 from typing import Optional
-from config_sample import (
-    SUPABASE_URL,
-    COOKIE_DOMAIN,
-    COOKIE_SECURE,
-    COOKIE_SAMESITE,
-    ACCESS_TOKEN_COOKIE,
-    REFRESH_TOKEN_COOKIE
-)
-
+import config_sample as config
 
 # --------- Utilities ---------
 def base64url_encode(data: bytes) -> str:
@@ -29,41 +21,41 @@ def compute_code_challenge(verifier: str) -> str:
 def set_session_cookies(response: Response, access_token: str, refresh_token: str, max_age: int = 60 * 60):
     # Supabase tokens usually have ~1 hour expiry; set cookie max-age accordingly
     response.set_cookie(
-        key=ACCESS_TOKEN_COOKIE,
+        key=config.ACCESS_TOKEN_COOKIE,
         value=access_token,
-        domain=COOKIE_DOMAIN,
-        secure=COOKIE_SECURE,
+        domain=config.COOKIE_DOMAIN,
+        secure=config.COOKIE_SECURE,
         httponly=True,
-        samesite=COOKIE_SAMESITE,
+        samesite=config.COOKIE_SAMESITE,
         max_age=max_age,
         path="/",
     )
     response.set_cookie(
-        key=REFRESH_TOKEN_COOKIE,
+        key=config.REFRESH_TOKEN_COOKIE,
         value=refresh_token,
-        domain=COOKIE_DOMAIN,
-        secure=COOKIE_SECURE,
+        domain=config.COOKIE_DOMAIN,
+        secure=config.COOKIE_SECURE,
         httponly=True,
-        samesite=COOKIE_SAMESITE,
+        samesite=config.COOKIE_SAMESITE,
         max_age=60 * 60 * 24 * 7,  # refresh tokens typically longer-lived
         path="/",
     )
 
 def clear_session_cookies(response: Response):
-    response.delete_cookie(ACCESS_TOKEN_COOKIE, domain=COOKIE_DOMAIN, path="/")
-    response.delete_cookie(REFRESH_TOKEN_COOKIE, domain=COOKIE_DOMAIN, path="/")
+    response.delete_cookie(config.ACCESS_TOKEN_COOKIE, domain=config.COOKIE_DOMAIN, path="/")
+    response.delete_cookie(config.REFRESH_TOKEN_COOKIE, domain=config.COOKIE_DOMAIN, path="/")
 
 def extract_access_token(request: Request) -> Optional[str]:
     # Prefer Authorization header; fallback to cookie
     auth = request.headers.get("Authorization")
     if auth and auth.lower().startswith("bearer "):
         return auth.split(" ", 1)[1]
-    token = request.cookies.get(ACCESS_TOKEN_COOKIE)
+    token = request.cookies.get(config.ACCESS_TOKEN_COOKIE)
     return token
 
 async def supabase_exchange_code_for_session(code: str, code_verifier: str, redirect_uri: str):
     # Exchange authorization code for tokens with Supabase GoTrue
-    token_url = f"{SUPABASE_URL}/auth/v1/token?grant_type=authorization_code"
+    token_url = f"{config.SUPABASE_URL}/auth/v1/token?grant_type=authorization_code"
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
             token_url,
